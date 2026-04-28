@@ -1,0 +1,12 @@
+[Doctors]
+Dr.House e240520749f49de984d68370037de6124994c97333570f6fcf588cf6df54ebe0
+Dr.Strange e1f194b3a63f56e8405971c57a575dd214c57e66ca95aeb1a1bc697762125cff
+Dr.Dolittle ca0f6270f6e50c47e88ebb76187f258ece219cc50bf0c0146aca3f3e20b7eacf 
+
+[Treatments]
+Flu Antivirals
+StrepThroat Antibiotics
+Headache Ibuprofen
+Fever Acetaminophen
+Allergies Antihistamines
+Migraine Triptans
