@@ -16,8 +16,8 @@ CLI     = client/client
 
 all: $(HOSP) $(AUTH) $(APPT) $(PRES) $(CLI)
 
-$(HOSP): hospital_server/hospital_server.c include/project_ports.h include/project_proto.h
-	$(CC) $(CFLAGS) $(DEFS) -o $@ hospital_server/hospital_server.c $(LDFLAGS)
+$(HOSP): hospital_server/hospital_server.c include/project_ports.h include/project_proto.h common/sha256.c common/sha256.h
+	$(CC) $(CFLAGS) $(DEFS) -o $@ hospital_server/hospital_server.c common/sha256.c $(LDFLAGS)
 
 $(AUTH): authentication_server/authentication_server.c include/project_ports.h include/project_proto.h
 	$(CC) $(CFLAGS) $(DEFS) -o $@ authentication_server/authentication_server.c $(LDFLAGS)

@@ -4,6 +4,7 @@
  */
 
 #include <arpa/inet.h>
+#include <ctype.h>
 #include <errno.h>
 #include <netinet/in.h>
 #include <stdio.h>
@@ -18,6 +19,7 @@
 
 #include <netdb.h>
 
+#include "../common/sha256.h"
 #include "../include/project_proto.h"
 #include "../include/project_ports.h"
 
@@ -221,6 +223,123 @@ static int appt_recv(int udpfd, char *resp, size_t respcap) {
     if (n < 0)
         return -1;
     resp[n] = '\0';
+    return 0;
+}
+
+static int pres_send(int udpfd, const char *req) {
+    struct sockaddr_in pres;
+    memset(&pres, 0, sizeof pres);
+    pres.sin_family = AF_INET;
+    pres.sin_port = htons(PROJECT_PRES_UDP_PORT);
+    if (inet_pton(AF_INET, "127.0.0.1", &pres.sin_addr) <= 0)
+        return -1;
+    return sendto(udpfd, req, strlen(req), 0, (struct sockaddr *)&pres, sizeof pres) < 0 ? -1 : 0;
+}
+
+static int pres_recv(int udpfd, char *resp, size_t respcap) {
+    struct sockaddr_storage src;
+    socklen_t srclen = sizeof src;
+    ssize_t n = recvfrom(udpfd, resp, respcap - 1, 0, (struct sockaddr *)&src, &srclen);
+    (void)src;
+    if (n < 0)
+        return -1;
+    resp[n] = '\0';
+    return 0;
+}
+
+static void username_to_user_hex(const char *username, char out_hex[65]) {
+    sha256_easy_hash_hex(username, strlen(username), out_hex);
+    out_hex[64] = '\0';
+}
+
+static int split_prescribe_args(const char *s, char *pat, size_t patcap, char *freq, size_t freqcap) {
+    while (*s && isspace((unsigned char)*s))
+        s++;
+    if (*s == '\0')
+        return -1;
+    size_t i = 0;
+    while (*s && !isspace((unsigned char)*s) && i + 1 < patcap)
+        pat[i++] = *s++;
+    pat[i] = '\0';
+    while (*s && isspace((unsigned char)*s))
+        s++;
+    if (*s == '\0')
+        return -1;
+    strncpy(freq, s, freqcap - 1);
+    freq[freqcap - 1] = '\0';
+    size_t n = strlen(freq);
+    while (n > 0 && isspace((unsigned char)freq[n - 1]))
+        freq[--n] = '\0';
+    return pat[0] ? 0 : -1;
+}
+
+static FILE *open_appt_file(void) {
+    FILE *f = fopen("appointment_server/appointments.txt", "r");
+    return f;
+}
+
+static void trim_end_local(char *s) {
+    size_t n = strlen(s);
+    while (n > 0 && (s[n - 1] == '\n' || s[n - 1] == '\r' || isspace((unsigned char)s[n - 1])))
+        s[--n] = '\0';
+}
+
+static int find_illness_for_patient_doctor(const char *patient_hex, const char *doctor, char *ill, size_t illcap) {
+    FILE *f = open_appt_file();
+    if (!f)
+        return 0;
+    char line[512];
+    int in_doc = 0;
+    while (fgets(line, sizeof line, f)) {
+        trim_end_local(line);
+        if (line[0] == '\0')
+            continue;
+        if (strchr(line, ' ') == NULL && strchr(line, ':') == NULL) {
+            in_doc = (strcmp(line, doctor) == 0);
+            continue;
+        }
+        if (!in_doc)
+            continue;
+        char tok1[64], tok2[65], tok3[128];
+        if (sscanf(line, "%63s %64s %127s", tok1, tok2, tok3) != 3)
+            continue;
+        if (!strchr(tok1, ':'))
+            continue;
+        if (strcmp(tok2, patient_hex) == 0) {
+            strncpy(ill, tok3, illcap - 1);
+            ill[illcap - 1] = '\0';
+            fclose(f);
+            return 1;
+        }
+    }
+    fclose(f);
+    return 0;
+}
+
+static int lookup_treatment_for_illness(const char *illness, char *trt, size_t trtcap) {
+    FILE *f = open_hospital_file();
+    if (!f)
+        return 0;
+    char line[512];
+    int in_treat = 0;
+    while (fgets(line, sizeof line, f)) {
+        if (strncmp(line, "[Treatments]", 12) == 0) {
+            in_treat = 1;
+            continue;
+        }
+        if (!in_treat)
+            continue;
+        char ill[128], treatment[128];
+        if (sscanf(line, "%127s %127s", ill, treatment) != 2)
+            continue;
+        if (strcmp(ill, illness) == 0) {
+            strncpy(trt, treatment, trtcap - 1);
+            trt[trtcap - 1] = '\0';
+            fclose(f);
+            return 1;
+        }
+    }
+    fclose(f);
     return 0;
 }
 
@@ -454,6 +573,98 @@ static void handle_client_cmd(ClientCtx *c, int udpfd, uint16_t hosp_udp_port,
         }
         printf("Hospital server has received the response from the Appointment server using UDP over port %u.\n",
                (unsigned)hosp_udp_port);
+        tcp_send_line(c->fd, resp);
+        tcp_end_message(c->fd);
+        printf("The hospital server has sent the response to the client.\n");
+        return;
+    }
+
+    if (strncmp(line, "prescribe ", 10) == 0) {
+        if (!c->is_doctor) {
+            tcp_reply_done(c, "RES|ERR|forbidden");
+            return;
+        }
+        char pat[128], freq[512];
+        if (split_prescribe_args(line + 10, pat, sizeof pat, freq, sizeof freq) < 0) {
+            tcp_reply_done(c, "RES|ERR|badcmd");
+            return;
+        }
+        char pat_hex[65];
+        username_to_user_hex(pat, pat_hex);
+        char illness[128], treatment[128];
+        if (!find_illness_for_patient_doctor(pat_hex, c->doctor_plain, illness, sizeof illness) ||
+            !lookup_treatment_for_illness(illness, treatment, sizeof treatment)) {
+            tcp_reply_done(c, "RES|PRESCRIBE|fail|treatment");
+            return;
+        }
+        printf("Hospital Server has received a prescribe request from %s for patient %s over TCP port %u.\n",
+               c->doctor_plain, pat, (unsigned)hosp_tcp_port);
+        snprintf(req, sizeof req, "REQ|PRESCRIBE|%s|%s|%s|%s", pat_hex, c->doctor_plain, treatment, freq);
+        if (pres_send(udpfd, req) < 0) {
+            tcp_reply_done(c, "RES|ERR|pres");
+            return;
+        }
+        printf("Hospital Server has sent the prescribe request to the Prescription Server.\n");
+        if (pres_recv(udpfd, resp, sizeof resp) < 0) {
+            tcp_reply_done(c, "RES|ERR|pres");
+            return;
+        }
+        printf("Hospital Server has received the response from Prescription Server over UDP.\n");
+        tcp_send_line(c->fd, resp);
+        tcp_end_message(c->fd);
+        printf("The hospital server has sent the response to the client.\n");
+        return;
+    }
+
+    if (strncmp(line, "view_prescription ", 18) == 0) {
+        if (!c->is_doctor) {
+            tcp_reply_done(c, "RES|ERR|forbidden");
+            return;
+        }
+        char pat[128];
+        if (sscanf(line + 18, "%127s", pat) != 1) {
+            tcp_reply_done(c, "RES|ERR|badcmd");
+            return;
+        }
+        char pat_hex[65];
+        username_to_user_hex(pat, pat_hex);
+        printf("Hospital Server has received a view-prescription request from %s for patient %s over TCP port %u.\n",
+               c->doctor_plain, pat, (unsigned)hosp_tcp_port);
+        snprintf(req, sizeof req, "REQ|VIEW_RX|%s", pat_hex);
+        if (pres_send(udpfd, req) < 0) {
+            tcp_reply_done(c, "RES|ERR|pres");
+            return;
+        }
+        printf("Hospital Server has sent the view-prescription request to the Prescription Server.\n");
+        if (pres_recv(udpfd, resp, sizeof resp) < 0) {
+            tcp_reply_done(c, "RES|ERR|pres");
+            return;
+        }
+        printf("Hospital Server has received the response from Prescription Server over UDP.\n");
+        tcp_send_line(c->fd, resp);
+        tcp_end_message(c->fd);
+        printf("The hospital server has sent the response to the client.\n");
+        return;
+    }
+
+    if (strcmp(line, "view_prescription") == 0) {
+        if (c->is_doctor) {
+            tcp_reply_done(c, "RES|ERR|badcmd");
+            return;
+        }
+        printf("Hospital Server has received a view-prescription request from user hash suffix %s over TCP port %u.\n",
+               suf, (unsigned)hosp_tcp_port);
+        snprintf(req, sizeof req, "REQ|VIEW_RX|%s", c->user_hex);
+        if (pres_send(udpfd, req) < 0) {
+            tcp_reply_done(c, "RES|ERR|pres");
+            return;
+        }
+        printf("Hospital Server has sent the view-prescription request to the Prescription Server.\n");
+        if (pres_recv(udpfd, resp, sizeof resp) < 0) {
+            tcp_reply_done(c, "RES|ERR|pres");
+            return;
+        }
+        printf("Hospital Server has received the response from Prescription Server over UDP.\n");
         tcp_send_line(c->fd, resp);
         tcp_end_message(c->fd);
         printf("The hospital server has sent the response to the client.\n");

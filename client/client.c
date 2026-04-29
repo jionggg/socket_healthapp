@@ -32,6 +32,27 @@ static void trim_cmd(char *s) {
         *--end = '\0';
 }
 
+static int split_prescribe_args(const char *s, char *pat, size_t patcap, char *freq, size_t freqcap) {
+    while (*s && isspace((unsigned char)*s))
+        s++;
+    if (*s == '\0')
+        return -1;
+    size_t i = 0;
+    while (*s && !isspace((unsigned char)*s) && i + 1 < patcap)
+        pat[i++] = *s++;
+    pat[i] = '\0';
+    while (*s && isspace((unsigned char)*s))
+        s++;
+    if (*s == '\0')
+        return -1;
+    strncpy(freq, s, freqcap - 1);
+    freq[freqcap - 1] = '\0';
+    size_t n = strlen(freq);
+    while (n > 0 && isspace((unsigned char)freq[n - 1]))
+        freq[--n] = '\0';
+    return pat[0] ? 0 : -1;
+}
+
 static int read_line_sock(int fd, char *buf, size_t cap) {
     size_t i = 0;
     while (i + 1 < cap) {
@@ -253,6 +274,65 @@ static void handle_view_doc(int sockfd, const char *doctor_username) {
     (void)read_line_sock(sockfd, line, sizeof line);
 }
 
+static void handle_prescribe_response(int sockfd, const char *doctor_username, const char *patient_username,
+                                      const char *frequency) {
+    char line[LINE_MAX];
+    if (read_line_sock(sockfd, line, sizeof line) < 0)
+        return;
+    if (strcmp(line, ".") == 0)
+        return;
+    uint16_t p = client_tcp_port(sockfd);
+    if (strcmp(line, "RES|PRESCRIBE|ok") == 0) {
+        printf("The client received the response from the Hospital Server\n");
+        printf("using TCP over port %u\n", (unsigned)p);
+        printf("Prescription recorded for patient %s (%s) by %s.\n", patient_username, frequency, doctor_username);
+    } else if (strncmp(line, "RES|PRESCRIBE|fail", 17) == 0) {
+        printf("The client received the response from the Hospital Server\n");
+        printf("using TCP over port %u\n", (unsigned)p);
+        printf("Could not record prescription for %s.\n", patient_username);
+    } else if (strncmp(line, "RES|ERR", 7) == 0) {
+        printf("The client received the response from the Hospital Server\n");
+        printf("using TCP over port %u\n", (unsigned)p);
+        printf("The hospital server could not complete that request.\n");
+    }
+    (void)read_line_sock(sockfd, line, sizeof line);
+}
+
+static void handle_view_rx(int sockfd, const char *label_name, int is_self) {
+    char line[LINE_MAX];
+    if (read_line_sock(sockfd, line, sizeof line) < 0)
+        return;
+    if (strcmp(line, ".") == 0)
+        return;
+    uint16_t p = client_tcp_port(sockfd);
+    if (strcmp(line, "RES|VIEW_RX|none") == 0) {
+        printf("The client received the response from the Hospital Server\n");
+        printf("using TCP over port %u\n", (unsigned)p);
+        if (is_self)
+            printf("You have no prescriptions on file.\n");
+        else
+            printf("%s has no prescriptions on file.\n", label_name);
+    } else if (strncmp(line, "RES|VIEW_RX|ok|", 15) == 0) {
+        char work[LINE_MAX];
+        strncpy(work, line + 15, sizeof work - 1);
+        work[sizeof work - 1] = '\0';
+        char *save = NULL;
+        for (char *doc = strtok_r(work, "|", &save); doc; doc = strtok_r(NULL, "|", &save)) {
+            char *trt = strtok_r(NULL, "|", &save);
+            char *fr = strtok_r(NULL, "|", &save);
+            if (!trt || !fr)
+                break;
+            printf("The client received the response from the hospital server using TCP over port %u %s has been prescribed %s, to be taken %s, by %s.\n",
+                   (unsigned)p, label_name, trt, fr, doc);
+        }
+    } else if (strncmp(line, "RES|VIEW_RX|fail", 16) == 0 || strncmp(line, "RES|ERR", 7) == 0) {
+        printf("The client received the response from the Hospital Server\n");
+        printf("using TCP over port %u\n", (unsigned)p);
+        printf("The hospital server could not complete that request.\n");
+    }
+    (void)read_line_sock(sockfd, line, sizeof line);
+}
+
 int main(int argc, char *argv[]) {
     if (argc != 3)
         return 1;
@@ -397,6 +477,38 @@ int main(int argc, char *argv[]) {
             printf("%s sent a request to view their scheduled appointments to the Hospital Server.\n", username);
             send(sockfd, "view_appointments\n", 19, 0);
             handle_view_doc(sockfd, username);
+            continue;
+        }
+        if (strncmp(cmdbuf, "prescribe ", 10) == 0) {
+            if (!is_doctor)
+                continue;
+            char pat[128], freq[512];
+            if (split_prescribe_args(cmdbuf + 10, pat, sizeof pat, freq, sizeof freq) < 0)
+                continue;
+            printf("%s sent a prescribe request to the Hospital Server for patient %s.\n", username, pat);
+            if (send(sockfd, cmdbuf, strlen(cmdbuf), 0) < 0 || send(sockfd, "\n", 1, 0) < 0)
+                break;
+            handle_prescribe_response(sockfd, username, pat, freq);
+            continue;
+        }
+        if (strncmp(cmdbuf, "view_prescription ", 18) == 0) {
+            if (!is_doctor)
+                continue;
+            char pat[128];
+            if (sscanf(cmdbuf + 18, "%127s", pat) != 1)
+                continue;
+            printf("%s sent a view-prescription request to the Hospital Server for patient %s.\n", username, pat);
+            if (send(sockfd, cmdbuf, strlen(cmdbuf), 0) < 0 || send(sockfd, "\n", 1, 0) < 0)
+                break;
+            handle_view_rx(sockfd, pat, 0);
+            continue;
+        }
+        if (strcmp(cmdbuf, "view_prescription") == 0) {
+            if (is_doctor)
+                continue;
+            printf("%s sent a view-prescription request to the Hospital Server.\n", username);
+            send(sockfd, "view_prescription\n", 18, 0);
+            handle_view_rx(sockfd, username, 1);
             continue;
         }
     }

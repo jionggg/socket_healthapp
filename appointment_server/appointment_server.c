@@ -39,10 +39,8 @@ static void trim_end(char *s) {
 }
 
 static FILE *open_appt_file(const char *mode) {
-    FILE *f = fopen("appointments.txt", mode);
-    if (f)
-        return f;
-    return fopen("appointment_server/appointments.txt", mode);
+    FILE *f = fopen("appointment_server/appointments.txt", mode);
+    return f;
 }
 
 static int time_to_idx(const char *t) {
