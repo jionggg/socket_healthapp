@@ -1,7 +1,7 @@
 # Ubuntu: make all, then run servers in order per Phase 1A.
 
 CC      = gcc
-CFLAGS  = -Wall -Wextra -std=c99 -pedantic -Iinclude -Icommon
+CFLAGS  = -Wall -Wextra -std=c99 -pedantic -D_POSIX_C_SOURCE=200809L -Iinclude -Icommon
 LDFLAGS =
 USC_SUFFIX ?= 994
 DEFS    = -DPROJECT_USC_SUFFIX=$(USC_SUFFIX)
