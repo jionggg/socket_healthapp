@@ -1,6 +1,6 @@
 /*
- * EE450 Authentication Server — Phase 1A: UDP bind, boot message, recv loop.
- * Socket setup adapted from Beej's Guide to Network Programming (beej.us/guide/bgnet/).
+ * Authentication Server — Phase 1B: UDP auth against users.txt.
+ * Socket patterns adapted from Beej's Guide to Network Programming (beej.us/guide/bgnet/).
  */
 
 #include <arpa/inet.h>
@@ -12,6 +12,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include "../include/project_proto.h"
 #include "../include/project_ports.h"
 
 static uint16_t local_port(int sockfd) {
@@ -22,6 +23,39 @@ static uint16_t local_port(int sockfd) {
         exit(1);
     }
     return ntohs(sin.sin_port);
+}
+
+static void hash_suffix(const char *hex64, char out[6]) {
+    memcpy(out, hex64 + 59, 5);
+    out[5] = '\0';
+}
+
+static FILE *open_users_file(void) {
+    FILE *f = fopen("users.txt", "r");
+    if (f)
+        return f;
+    f = fopen("authentication_server/users.txt", "r");
+    return f;
+}
+
+static int credentials_valid(const char *user_hex, const char *pass_hex) {
+    FILE *f = open_users_file();
+    if (!f)
+        return 0;
+
+    char line[512];
+    int ok = 0;
+    while (fgets(line, sizeof line, f)) {
+        char uh[65], ph[65];
+        if (sscanf(line, "%64s %64s", uh, ph) != 2)
+            continue;
+        if (strcmp(uh, user_hex) == 0 && strcmp(ph, pass_hex) == 0) {
+            ok = 1;
+            break;
+        }
+    }
+    fclose(f);
+    return ok;
 }
 
 int main(void) {
@@ -42,7 +76,7 @@ int main(void) {
 
     memset(&addr, 0, sizeof addr);
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(EE450_AUTH_UDP_PORT);
+    addr.sin_port = htons(PROJECT_AUTH_UDP_PORT);
     if (inet_pton(AF_INET, host, &addr.sin_addr) <= 0) {
         fprintf(stderr, "authentication_server: bad address\n");
         exit(1);
@@ -58,11 +92,39 @@ int main(void) {
            (unsigned)port);
 
     for (;;) {
-        char buf[2048];
+        char buf[512];
         struct sockaddr_storage src;
         socklen_t srclen = sizeof src;
-        (void)recvfrom(sockfd, buf, sizeof buf, 0,
-                       (struct sockaddr *)&src, &srclen);
+        ssize_t n = recvfrom(sockfd, buf, sizeof buf - 1, 0,
+                             (struct sockaddr *)&src, &srclen);
+        if (n <= 0)
+            continue;
+        buf[n] = '\0';
+
+        char user_hex[65], pass_hex[65];
+        if (sscanf(buf, "%64s %64s", user_hex, pass_hex) != 2)
+            continue;
+
+        char suf[6];
+        hash_suffix(user_hex, suf);
+        printf("Authentication Server has received an authentication request for a user with hash suffix: %s.\n",
+               suf);
+
+        int valid = credentials_valid(user_hex, pass_hex);
+        if (valid) {
+            printf("Authentication succeeded for a user with hash suffix: %s.\n", suf);
+        } else {
+            printf("Authentication failed for a user with hash suffix: %s.\n", suf);
+        }
+
+        const char *reply = valid ? PROJECT_AUTH_REPLY_OK : PROJECT_AUTH_REPLY_FAIL;
+        if (sendto(sockfd, reply, strlen(reply), 0,
+                   (struct sockaddr *)&src, srclen) < 0) {
+            perror("authentication_server: sendto");
+            continue;
+        }
+
+        printf("The Authentication Server has sent the authentication result to the Hospital Server.\n");
     }
 
     close(sockfd);

@@ -1,10 +1,10 @@
-# EE450 project — Ubuntu: make all, then run servers in order per Phase 1A.
+# Ubuntu: make all, then run servers in order per Phase 1A.
 
 CC      = gcc
-CFLAGS  = -Wall -Wextra -std=c99 -pedantic -Iinclude
+CFLAGS  = -Wall -Wextra -std=c99 -pedantic -Iinclude -Icommon
 LDFLAGS =
 USC_SUFFIX ?= 994
-DEFS    = -DEE450_USC_SUFFIX=$(USC_SUFFIX)
+DEFS    = -DPROJECT_USC_SUFFIX=$(USC_SUFFIX)
 
 HOSP    = hospital_server/hospital_server
 AUTH    = authentication_server/authentication_server
@@ -16,10 +16,10 @@ CLI     = client/client
 
 all: $(HOSP) $(AUTH) $(APPT) $(PRES) $(CLI)
 
-$(HOSP): hospital_server/hospital_server.c include/project_ports.h
+$(HOSP): hospital_server/hospital_server.c include/project_ports.h include/project_proto.h
 	$(CC) $(CFLAGS) $(DEFS) -o $@ hospital_server/hospital_server.c $(LDFLAGS)
 
-$(AUTH): authentication_server/authentication_server.c include/project_ports.h
+$(AUTH): authentication_server/authentication_server.c include/project_ports.h include/project_proto.h
 	$(CC) $(CFLAGS) $(DEFS) -o $@ authentication_server/authentication_server.c $(LDFLAGS)
 
 $(APPT): appointment_server/appointment_server.c include/project_ports.h
@@ -28,8 +28,8 @@ $(APPT): appointment_server/appointment_server.c include/project_ports.h
 $(PRES): prescription_server/prescription_server.c include/project_ports.h
 	$(CC) $(CFLAGS) $(DEFS) -o $@ prescription_server/prescription_server.c $(LDFLAGS)
 
-$(CLI): client/client.c
-	$(CC) $(CFLAGS) -o $@ client/client.c $(LDFLAGS)
+$(CLI): client/client.c common/sha256.c include/project_ports.h include/project_proto.h common/sha256.h
+	$(CC) $(CFLAGS) $(DEFS) -o $@ client/client.c common/sha256.c $(LDFLAGS)
 
 clean:
 	rm -f $(HOSP) $(AUTH) $(APPT) $(PRES) $(CLI)

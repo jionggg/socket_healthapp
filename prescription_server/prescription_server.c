@@ -1,5 +1,5 @@
 /*
- * EE450 Prescription Server — Phase 1A: UDP bind, boot message, recv loop.
+ * Prescription server — Phase 1A: UDP bind, boot message, recv loop.
  * Socket setup adapted from Beej's Guide to Network Programming (beej.us/guide/bgnet/).
  */
 
@@ -42,7 +42,7 @@ int main(void) {
 
     memset(&addr, 0, sizeof addr);
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(EE450_PRES_UDP_PORT);
+    addr.sin_port = htons(PROJECT_PRES_UDP_PORT);
     if (inet_pton(AF_INET, host, &addr.sin_addr) <= 0) {
         fprintf(stderr, "prescription_server: bad address\n");
         exit(1);
