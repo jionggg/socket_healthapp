@@ -1,10 +1,9 @@
 # EE450 project — Ubuntu: make all, then run servers in order per Phase 1A.
-# Override USC suffix: make all USC_SUFFIX=319
 
 CC      = gcc
 CFLAGS  = -Wall -Wextra -std=c99 -pedantic -Iinclude
 LDFLAGS =
-USC_SUFFIX ?= 0
+USC_SUFFIX ?= 994
 DEFS    = -DEE450_USC_SUFFIX=$(USC_SUFFIX)
 
 HOSP    = hospital_server/hospital_server
